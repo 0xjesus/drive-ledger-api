@@ -1,0 +1,210 @@
+// schema.prisma
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String         @id @default(uuid())
+  walletAddress    String         @unique
+  username         String?
+  profileImageUrl  String?
+  bio              String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  listings         Listing[]      @relation("SellerListings")
+  purchasedSubs    Subscription[] @relation("BuyerSubscriptions")
+  soldSubs         Subscription[] @relation("SellerSubscriptions")
+  sentTransactions Transaction[]  @relation("SenderTransactions")
+  receivedTx       Transaction[]  @relation("ReceiverTransactions")
+  simulations      Simulation[]
+  givenRatings     Rating[]       @relation("RatingGiver")
+  receivedRatings  Rating[]       @relation("RatingReceiver")
+  tokenBalances    TokenBalance[]
+  rewards          Reward[]
+}
+
+model Simulation {
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id])
+  routeType        String
+  startedAt        DateTime         @default(now())
+  endedAt          DateTime?
+  durationMinutes  Float?
+  distanceKm       Float?
+  avgSpeedKmph     Float?
+  maxSpeedKmph     Float?
+  efficiencyScore  Int?
+  dataPointsCount  Int              @default(0)
+  rawData          Json? // Almacena puntos de datos seleccionados
+  diagnosticIssues Json? // Almacena códigos de error encontrados
+  status           SimulationStatus @default(RUNNING)
+  rewards          Reward[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+model Reward {
+  id                 String       @id @default(uuid())
+  userId             String
+  user               User         @relation(fields: [userId], references: [id])
+  simulationId       String?
+  simulation         Simulation?  @relation(fields: [simulationId], references: [id])
+  amount             Float
+  transactionHash    String?      @unique // Hash de la transacción en Solana
+  encodedTransaction String?      @db.Text
+  status             RewardStatus @default(PENDING)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+}
+
+model TokenBalance {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  tokenMintAddress String
+  balance          Float    @default(0)
+  lastUpdated      DateTime @default(now())
+
+  @@unique([userId, tokenMintAddress])
+}
+
+model Listing {
+  id              String         @id @default(uuid())
+  sellerId        String
+  seller          User           @relation("SellerListings", fields: [sellerId], references: [id])
+  dataType        String
+  typeName        String
+  typeDescription String?
+  privacyImpact   String
+  pricePerPoint   Float
+  description     String?
+  samples         Json? // Almacena muestras de datos
+  active          Boolean        @default(true)
+  purchaseCount   Int            @default(0)
+  avgRating       Float?
+  ratingCount     Int            @default(0)
+  subscriptions   Subscription[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Subscription {
+  id            String             @id @default(uuid())
+  buyerId       String
+  buyer         User               @relation("BuyerSubscriptions", fields: [buyerId], references: [id])
+  sellerId      String
+  seller        User               @relation("SellerSubscriptions", fields: [sellerId], references: [id])
+  listingId     String
+  listing       Listing            @relation(fields: [listingId], references: [id])
+  transactionId String?
+  transaction   Transaction?       @relation(fields: [transactionId], references: [id])
+  pointsPerDay  Int
+  durationDays  Int
+  startDate     DateTime           @default(now())
+  endDate       DateTime
+  totalPrice    Float
+  status        SubscriptionStatus @default(PENDING)
+  ratings       Rating[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+}
+
+model Transaction {
+  id                 String            @id @default(uuid())
+  type               TransactionType
+  senderId           String
+  sender             User              @relation("SenderTransactions", fields: [senderId], references: [id])
+  receiverId         String
+  receiver           User              @relation("ReceiverTransactions", fields: [receiverId], references: [id])
+  listingId          String?
+  amount             Float
+  pointsCount        Int?
+  status             TransactionStatus @default(PENDING)
+  blockchainTxHash   String?           @unique // Hash de la transacción en Solana
+  encodedTransaction String?           @db.Text
+  subscriptions      Subscription[]
+  createdAt          DateTime          @default(now())
+  completedAt        DateTime?
+  updatedAt          DateTime          @updatedAt
+}
+
+model Rating {
+  id             String       @id @default(uuid())
+  value          Float // 1-5 stars
+  comment        String?
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  giverId        String
+  giver          User         @relation("RatingGiver", fields: [giverId], references: [id])
+  receiverId     String
+  receiver       User         @relation("RatingReceiver", fields: [receiverId], references: [id])
+  createdAt      DateTime     @default(now())
+}
+
+model DiagnosticCode {
+  id           String   @id @default(uuid())
+  code         String   @unique
+  description  String
+  severity     String
+  impact       String
+  rewardImpact Float // Porcentaje de impacto en recompensas
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model SimulationRoute {
+  id              String   @id @default(uuid())
+  routeType       String   @unique
+  name            String
+  description     String
+  averageSpeed    Float
+  maxSpeed        Float
+  trafficDensity  String
+  distance        Float
+  estimatedTime   Int // Minutos
+  fuelConsumption String
+  elevationChange String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+enum SimulationStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum RewardStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum TransactionType {
+  SUBSCRIPTION
+  REWARD
+  TRANSFER
+  AIRDROP
+}
