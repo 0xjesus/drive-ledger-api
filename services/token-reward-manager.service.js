@@ -19,7 +19,9 @@ class TokenRewardManager {
   static SOLANA_CONNECTION = new Connection(`https://api.${TokenRewardManager.SOLANA_NETWORK}.solana.com`, 'confirmed');
   static TOKEN_SYMBOL = 'DRVL';
   static TOKEN_DECIMALS = 6;
-  static TOKEN_MINT_ADDRESS = null;
+  static TOKEN_MINT_ADDRESS = "2CdXTtCLWNMfG7EvuMfuQ7FNEjrneUxscg3VgpqQzgAD"; // Dirección por defecto
+  static IS_INITIALIZED = false;
+  static INITIALIZATION_PROMISE = null;
 
   /**
    * Carga el keypair de la wallet que tiene autoridad para acuñar tokens
@@ -28,13 +30,58 @@ class TokenRewardManager {
    */
   static loadWalletKeypair(keypairPath = './wallet/devnet-wallet.json') {
     try {
+      console.log(`🔑 TokenRewardManager - Cargando keypair desde: ${keypairPath}`);
       const secretKeyString = fs.readFileSync(path.resolve(keypairPath), 'utf8');
       const secretKey = Uint8Array.from(JSON.parse(secretKeyString));
       return Keypair.fromSecretKey(secretKey);
     } catch (error) {
-      console.error('Error loading wallet keypair:', error);
+      console.error('❌ Error loading wallet keypair:', error);
       throw new Error('Failed to load wallet keypair');
     }
+  }
+
+  /**
+   * Asegura que el TokenRewardManager esté inicializado
+   * @param {string} tokenMintAddress - Dirección opcional del token (usa el valor por defecto si no se proporciona)
+   * @returns {Promise<Object>} Promesa que se resuelve cuando la inicialización está completa
+   */
+  static async ensureInitialized(tokenMintAddress = null) {
+    console.log(`🔄 TokenRewardManager.ensureInitialized - Verificando inicialización. Estado actual: ${TokenRewardManager.IS_INITIALIZED}`);
+
+    // Si ya está inicializado y no se está forzando una nueva inicialización, devolver
+    if (TokenRewardManager.IS_INITIALIZED && !tokenMintAddress) {
+      console.log(`✅ TokenRewardManager ya inicializado con dirección: ${TokenRewardManager.TOKEN_MINT_ADDRESS}`);
+      return {
+        tokenMintAddress: TokenRewardManager.TOKEN_MINT_ADDRESS,
+        tokenDecimals: TokenRewardManager.TOKEN_DECIMALS,
+        isInitialized: true
+      };
+    }
+
+    // Si hay una inicialización en curso, esperar a que termine
+    if (TokenRewardManager.INITIALIZATION_PROMISE) {
+      console.log(`⏳ TokenRewardManager - Inicialización en curso, esperando...`);
+      return TokenRewardManager.INITIALIZATION_PROMISE;
+    }
+
+    // Iniciar una nueva inicialización
+    const addressToUse = tokenMintAddress || TokenRewardManager.TOKEN_MINT_ADDRESS;
+    console.log(`🚀 TokenRewardManager - Inicializando con dirección: ${addressToUse}`);
+
+    // Crear una promesa para la inicialización
+    TokenRewardManager.INITIALIZATION_PROMISE = TokenRewardManager.initialize(addressToUse)
+      .then(result => {
+        TokenRewardManager.IS_INITIALIZED = true;
+        TokenRewardManager.INITIALIZATION_PROMISE = null;
+        return result;
+      })
+      .catch(error => {
+        console.error(`❌ Error en inicialización automática:`, error);
+        TokenRewardManager.INITIALIZATION_PROMISE = null;
+        throw error;
+      });
+
+    return TokenRewardManager.INITIALIZATION_PROMISE;
   }
 
   /**
@@ -44,12 +91,22 @@ class TokenRewardManager {
    */
   static async initialize(tokenMintAddress) {
     try {
+      console.log(`🔧 TokenRewardManager.initialize - Iniciando con dirección: ${tokenMintAddress}`);
+
       // Cargar información del token
       const mintPublicKey = new PublicKey(tokenMintAddress);
+      console.log(`🔍 TokenRewardManager - Obteniendo información del mint...`);
       const mintInfo = await getMint(TokenRewardManager.SOLANA_CONNECTION, mintPublicKey);
 
       TokenRewardManager.TOKEN_MINT_ADDRESS = tokenMintAddress;
       TokenRewardManager.TOKEN_DECIMALS = mintInfo.decimals;
+      TokenRewardManager.IS_INITIALIZED = true;
+
+      console.log(`✅ TokenRewardManager inicializado correctamente con:
+        - Dirección: ${tokenMintAddress}
+        - Decimales: ${mintInfo.decimals}
+        - Autoridad: ${mintInfo.mintAuthority.toString()}
+        - Supply: ${Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals)}`);
 
       return {
         tokenMintAddress,
@@ -58,7 +115,7 @@ class TokenRewardManager {
         supply: Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals)
       };
     } catch (error) {
-      console.error('Error initializing TokenRewardManager:', error);
+      console.error('❌ Error initializing TokenRewardManager:', error);
       throw error;
     }
   }
@@ -73,13 +130,12 @@ class TokenRewardManager {
    */
   static async mintRewardTokens(recipientAddress, amount, simulationId = null, keypairPath = './wallet/devnet-wallet.json') {
     try {
-      console.log(`Acuñando ${amount} ${TokenRewardManager.TOKEN_SYMBOL} para ${recipientAddress}...`);
+      console.log(`💰 mintRewardTokens - Acuñando ${amount} ${TokenRewardManager.TOKEN_SYMBOL} para ${recipientAddress}...`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
 
       // Validar parámetros
-      if (!TokenRewardManager.TOKEN_MINT_ADDRESS) {
-        throw new Error('TokenRewardManager no inicializado. Llama a initialize() primero.');
-      }
-
       if (!recipientAddress || !amount || amount <= 0) {
         throw new Error('Parámetros inválidos. Se requiere dirección de destinatario y cantidad positiva.');
       }
@@ -122,7 +178,7 @@ class TokenRewardManager {
 
       // Si la cuenta no existe, añadir instrucción para crearla
       if (!recipientTokenAccountInfo) {
-        console.log(`Cuenta de token no encontrada para ${recipientAddress}. Creando una nueva...`);
+        console.log(`🔄 Cuenta de token no encontrada para ${recipientAddress}. Creando una nueva...`);
 
         const createATAInstruction = createAssociatedTokenAccountInstruction(
           mintAuthorityKeypair.publicKey,
@@ -171,13 +227,13 @@ class TokenRewardManager {
         transaction.sign(mintAuthorityKeypair);
 
         // Enviar la transacción firmada
-        console.log('Enviando transacción a la blockchain...');
+        console.log('📤 Enviando transacción a la blockchain...');
         const signature = await TokenRewardManager.SOLANA_CONNECTION.sendRawTransaction(
           transaction.serialize()
         );
 
         // Esperar confirmación
-        console.log(`Esperando confirmación para la transacción ${signature}...`);
+        console.log(`⏳ Esperando confirmación para la transacción ${signature}...`);
         const confirmation = await TokenRewardManager.SOLANA_CONNECTION.confirmTransaction(signature);
 
         console.log(`✅ Transacción confirmada! ${amount} ${TokenRewardManager.TOKEN_SYMBOL} acuñados para ${recipientAddress}`);
@@ -207,7 +263,7 @@ class TokenRewardManager {
           txExplorer: `https://explorer.solana.com/tx/${signature}?cluster=${TokenRewardManager.SOLANA_NETWORK}`
         };
       } catch (txError) {
-        console.error('Error sending transaction:', txError);
+        console.error('❌ Error sending transaction:', txError);
 
         // Actualizar estado de la recompensa a fallido
         await prisma.reward.update({
@@ -229,7 +285,7 @@ class TokenRewardManager {
         };
       }
     } catch (error) {
-      console.error('Error acuñando tokens:', error);
+      console.error('❌ Error acuñando tokens:', error);
       return {
         success: false,
         error: error.message,
@@ -245,6 +301,11 @@ class TokenRewardManager {
    */
   static async updateTokenBalance(walletAddress, amountChange) {
     try {
+      console.log(`💵 updateTokenBalance - Actualizando balance para ${walletAddress}, cambio: ${amountChange}`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
+
       // Buscar el usuario
       const user = await prisma.user.findUnique({
         where: { walletAddress }
@@ -273,6 +334,7 @@ class TokenRewardManager {
             lastUpdated: new Date()
           }
         });
+        console.log(`✅ Balance actualizado: ${tokenBalance.balance} → ${tokenBalance.balance + amountChange}`);
       } else {
         // Crear nuevo balance
         await prisma.tokenBalance.create({
@@ -283,9 +345,10 @@ class TokenRewardManager {
             lastUpdated: new Date()
           }
         });
+        console.log(`✅ Nuevo balance creado: ${amountChange}`);
       }
     } catch (error) {
-      console.error('Error updating token balance:', error);
+      console.error('❌ Error updating token balance:', error);
       throw error;
     }
   }
@@ -300,7 +363,10 @@ class TokenRewardManager {
    */
   static async airdropTokens(walletAddress, amount = 100, keypairPath = './wallet/devnet-wallet.json') {
     try {
-      console.log(`Iniciando airdrop de ${amount} ${TokenRewardManager.TOKEN_SYMBOL} para ${walletAddress}...`);
+      console.log(`🚀 airdropTokens - Iniciando airdrop de ${amount} ${TokenRewardManager.TOKEN_SYMBOL} para ${walletAddress}...`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
 
       const userPublicKey = new PublicKey(walletAddress);
 
@@ -337,7 +403,7 @@ class TokenRewardManager {
 
       // Si el usuario tiene poco SOL, hacer un airdrop de SOL primero
       if (userSolBalance < 0.05 * LAMPORTS_PER_SOL) {
-        console.log(`Balance de SOL bajo (${userSolBalance / LAMPORTS_PER_SOL} SOL). Realizando airdrop de SOL...`);
+        console.log(`⚠️ Balance de SOL bajo (${userSolBalance / LAMPORTS_PER_SOL} SOL). Realizando airdrop de SOL...`);
 
         try {
           // Solicitar 1 SOL del faucet de devnet
@@ -392,7 +458,7 @@ class TokenRewardManager {
         };
       }
     } catch (error) {
-      console.error('Error en airdrop de tokens:', error);
+      console.error('❌ Error en airdrop de tokens:', error);
       return {
         success: false,
         error: error.message,
@@ -410,9 +476,10 @@ class TokenRewardManager {
    */
   static async generateTransferTransaction(fromAddress, toAddress, amount) {
     try {
-      if (!TokenRewardManager.TOKEN_MINT_ADDRESS) {
-        throw new Error('TokenRewardManager no inicializado. Llama a initialize() primero.');
-      }
+      console.log(`💸 generateTransferTransaction - Generando transacción de ${fromAddress} a ${toAddress}, cantidad: ${amount}`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
 
       // Buscar o crear usuarios en la base de datos
       const sender = await prisma.user.upsert({
@@ -457,6 +524,7 @@ class TokenRewardManager {
 
       // Si la cuenta no existe, añadir instrucción para crearla
       if (!toTokenAccountInfo) {
+        console.log(`🔄 Cuenta de token del destinatario no encontrada. Creando una nueva...`);
         const createToTokenAccountInstruction = createAssociatedTokenAccountInstruction(
           fromPublicKey,
           toTokenAddress,
@@ -504,7 +572,7 @@ class TokenRewardManager {
         amount: amount
       };
     } catch (error) {
-      console.error('Error generando transacción de transferencia:', error);
+      console.error('❌ Error generando transacción de transferencia:', error);
       throw error;
     }
   }
@@ -517,6 +585,11 @@ class TokenRewardManager {
    */
   static async confirmTransaction(transactionId, txHash) {
     try {
+      console.log(`✅ confirmTransaction - Confirmando transacción ID: ${transactionId}, Hash: ${txHash}`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
+
       // Buscar la transacción en la base de datos
       const transaction = await prisma.transaction.findUnique({
         where: { id: transactionId },
@@ -561,7 +634,7 @@ class TokenRewardManager {
         message: `Transaction confirmed with hash: ${txHash}`
       };
     } catch (error) {
-      console.error('Error confirming transaction:', error);
+      console.error('❌ Error confirming transaction:', error);
       return {
         success: false,
         error: error.message
@@ -576,9 +649,10 @@ class TokenRewardManager {
    */
   static async getTokenBalance(walletAddress) {
     try {
-      if (!TokenRewardManager.TOKEN_MINT_ADDRESS) {
-        throw new Error('TokenRewardManager no inicializado. Llama a initialize() primero.');
-      }
+      console.log(`💰 getTokenBalance - Consultando balance para: ${walletAddress}`);
+
+      // Auto-inicializar si es necesario
+      await TokenRewardManager.ensureInitialized();
 
       // Buscar usuario
       const user = await prisma.user.findUnique({
@@ -593,6 +667,7 @@ class TokenRewardManager {
       });
 
       if (!user) {
+        console.log(`ℹ️ Usuario no encontrado, creando nuevo usuario para wallet: ${walletAddress}`);
         // Crear usuario si no existe
         await prisma.user.create({
           data: { walletAddress }
@@ -610,6 +685,7 @@ class TokenRewardManager {
 
       // Si el usuario existe pero no tiene balance de este token
       if (user.tokenBalances.length === 0) {
+        console.log(`ℹ️ Usuario encontrado pero sin balance de tokens para: ${walletAddress}`);
         return {
           success: true,
           address: walletAddress,
@@ -621,6 +697,7 @@ class TokenRewardManager {
       }
 
       // Devolver balance existente
+      console.log(`✅ Balance encontrado: ${user.tokenBalances[0].balance} tokens para: ${walletAddress}`);
       return {
         success: true,
         address: walletAddress,
@@ -631,7 +708,7 @@ class TokenRewardManager {
         lastUpdated: user.tokenBalances[0].lastUpdated
       };
     } catch (error) {
-      console.error('Error obteniendo balance de tokens:', error);
+      console.error('❌ Error obteniendo balance de tokens:', error);
       return {
         success: false,
         address: walletAddress,
@@ -641,5 +718,17 @@ class TokenRewardManager {
     }
   }
 }
+
+// Auto-inicializar el TokenRewardManager al importarlo
+(async () => {
+  try {
+    console.log('🔄 Auto-inicializando TokenRewardManager con dirección por defecto...');
+    await TokenRewardManager.ensureInitialized();
+    console.log('✅ Auto-inicialización completada');
+  } catch (error) {
+    console.error('❌ Error en auto-inicialización:', error);
+    console.log('⚠️ TokenRewardManager se inicializará bajo demanda en la primera llamada');
+  }
+})();
 
 export default TokenRewardManager;
