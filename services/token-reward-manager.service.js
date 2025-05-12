@@ -9,10 +9,9 @@ import {
 } from '@solana/spl-token';
 import fs from 'fs';
 import path from 'path';
-import { PrismaClient } from '@prisma/client';
+import primate from '@thewebchimp/primate';
 
-const prisma = new PrismaClient();
-
+const prisma = primate.prisma
 class TokenRewardManager {
   // Configuración estática
   static SOLANA_NETWORK = 'devnet';
