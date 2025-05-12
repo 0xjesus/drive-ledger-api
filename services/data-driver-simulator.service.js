@@ -2,7 +2,7 @@
 import TokenRewardManager from './token-reward-manager.service.js';
 import primate from '@thewebchimp/primate';
 
-const prisma = priamte.prisma
+const prisma = primate.prisma
 
 class DataMarketplace {
   // Tipos de datos que se pueden listar en el marketplace
