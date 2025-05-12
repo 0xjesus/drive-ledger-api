@@ -1,8 +1,8 @@
 // DataMarketplace.js
 import TokenRewardManager from './token-reward-manager.service.js';
-import { PrismaClient } from '@prisma/client';
+import primate from '@thewebchimp/primate';
 
-const prisma = new PrismaClient();
+const prisma = priamte.prisma
 
 class DataMarketplace {
   // Tipos de datos que se pueden listar en el marketplace
