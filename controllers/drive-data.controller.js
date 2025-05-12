@@ -1,12 +1,12 @@
-import primate from '@thewebchimp/primate';
 import fs from 'fs';
 import path from 'path';
 import DataMarketplace from '../services/data-driver-simulator.service.js';
 import TokenRewardManager from '../services/token-reward-manager.service.js';
 import DriveDataSimulator from '../services/car-data.service.js';
 
+import { PrismaClient } from '@prisma/client';
 
-const prisma = primate.prisma
+const prisma = new  PrismaClient();
 
 class DriveDataController {
   /**
